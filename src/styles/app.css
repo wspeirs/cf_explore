@@ -1,0 +1,139 @@
+/* Page */
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #c0c0c0;
+  font: 11px "Pixelated MS Sans Serif", Arial, sans-serif;
+  overflow: hidden;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  box-sizing: border-box;
+}
+
+#app > .window[role="tabpanel"],
+#app > [role="tabpanel"] {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Panels */
+.panel {
+  display: flex;
+  gap: 4px;
+  height: 100%;
+}
+
+.sidebar {
+  width: 260px;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+}
+
+.tree-box {
+  flex: 1;
+  min-height: 0;
+  background: #fff;
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Editor and grid */
+.sql-editor {
+  height: 160px;
+  resize: vertical;
+  font: 12px "Courier New", monospace;
+  box-sizing: border-box;
+}
+
+.grid-box {
+  flex: 1;
+  min-height: 0;
+}
+
+.grid-box revo-grid {
+  height: 100%;
+}
+
+.icon-btn {
+  min-width: 0;
+  width: 22px;
+  height: 18px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Null cells */
+.cell-null {
+  color: #808080;
+  font-style: italic;
+}
+
+.cell-null::after {
+  content: "NULL";
+}
+
+/* Grid theme */
+.win98-grid revo-grid[theme] {
+  --revo-grid-font-family: "Pixelated MS Sans Serif", Arial;
+  --revo-grid-font-size: 11px;
+  --revo-grid-header-bg: #c0c0c0;
+  --revo-grid-header-color: #222;
+  --revo-grid-header-border: #808080;
+  --revo-grid-cell-border: #dfdfdf;
+  --revo-grid-selection-border: #000080;
+  --revo-grid-row-headers-bg: #c0c0c0;
+}
+
+.win98-grid revo-grid[theme] .header-cell {
+  box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #fff, inset -2px -2px #808080, inset 2px 2px #dfdfdf;
+}
+
+/* Modal overlay */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+/* Floating window */
+.floating-window {
+  position: fixed;
+  z-index: 50;
+  resize: both;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-width: 320px;
+  min-height: 200px;
+}
