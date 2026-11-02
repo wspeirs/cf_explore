@@ -97,4 +97,40 @@ mod tests {
             ("WITH c AS (SELECT 1) SELECT * FROM c".to_string(), false)
         );
     }
+
+    #[test]
+    fn test_auto_limit_untrimmed_when_no_limit() {
+        assert_eq!(
+            auto_limit("select * from t limit 5;\n"),
+            ("select * from t limit 5;\n".to_string(), false)
+        );
+        assert_eq!(
+            auto_limit("PRAGMA x;  "),
+            ("PRAGMA x;  ".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn test_ensure_where_skips_empty_statements() {
+        let err = ensure_where("SELECT 1;;  ;delete from t").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.starts_with("DELETE without a WHERE clause"));
+        assert!(msg.contains("(statement 2)"));
+    }
+
+    #[test]
+    fn test_sql_guard_whitespace_case_repeats() {
+        assert_eq!(
+            auto_limit("select *\tfrom t;;\n"),
+            ("select *\tfrom t\nLIMIT 1000".to_string(), true)
+        );
+        assert_eq!(
+            auto_limit("\n  SELECT 1"),
+            ("\n  SELECT 1\nLIMIT 1000".to_string(), true)
+        );
+        assert!(ensure_where("UPDATE t SET a=1\nWHERE\tid=2").is_ok());
+        assert!(ensure_where("  \n ; ").is_ok());
+        assert!(ensure_where("UPDATE t SET a='é'").is_err());
+        assert!(ensure_where("SELECT 1;").is_ok());
+    }
 }

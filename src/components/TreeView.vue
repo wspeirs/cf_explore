@@ -52,6 +52,7 @@ const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>(
           v-if="props.rows[item.index]?.expandable"
           class="tree-twisty"
           @click.stop="emit('toggle', props.rows[item.index])"
+          @dblclick.stop
         >
           {{ props.rows[item.index]?.expanded ? '−' : '+' }}
         </span>
@@ -132,7 +133,7 @@ const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>(
 
 .tree-label {
   padding: 0 2px;
-  font-size: 11px;
+  font-size: var(--font-size-ui, 12px);
 }
 
 .tree-label.selected {

@@ -1,3 +1,9 @@
+:root {
+  --font-ui: "Charcoal", "Geneva", -apple-system, BlinkMacSystemFont, "Lucida Grande", "Segoe UI", Roboto, Verdana, "DejaVu Sans", sans-serif;
+  --font-mono: "Monaco", "Menlo", "Courier New", monospace;
+  --font-size-ui: 12px;
+}
+
 /* Page */
 html,
 body,
@@ -8,8 +14,31 @@ body,
 
 body {
   background: #c0c0c0;
-  font: 11px "Pixelated MS Sans Serif", Arial, sans-serif;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-ui);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
+}
+
+button,
+label,
+input,
+legend,
+textarea,
+select,
+option,
+table,
+ul.tree-view,
+.tree-view,
+.window,
+.title-bar,
+li[role="tab"],
+.status-bar {
+  font-family: var(--font-ui);
+  font-size: var(--font-size-ui);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 #app {
@@ -19,7 +48,6 @@ body {
   box-sizing: border-box;
 }
 
-#app > .window[role="tabpanel"],
 #app > [role="tabpanel"] {
   flex: 1;
   min-height: 0;
@@ -63,7 +91,7 @@ body {
 .sql-editor {
   height: 160px;
   resize: vertical;
-  font: 12px "Courier New", monospace;
+  font: 12px var(--font-mono);
   box-sizing: border-box;
 }
 
@@ -78,6 +106,7 @@ body {
 
 .icon-btn {
   min-width: 0;
+  min-height: 0;
   width: 22px;
   height: 18px;
   padding: 0;
@@ -98,8 +127,8 @@ body {
 
 /* Grid theme */
 .win98-grid revo-grid[theme] {
-  --revo-grid-font-family: "Pixelated MS Sans Serif", Arial;
-  --revo-grid-font-size: 11px;
+  --revo-grid-font-family: var(--font-ui);
+  --revo-grid-font-size: var(--font-size-ui);
   --revo-grid-header-bg: #c0c0c0;
   --revo-grid-header-color: #222;
   --revo-grid-header-border: #808080;
@@ -108,7 +137,7 @@ body {
   --revo-grid-row-headers-bg: #c0c0c0;
 }
 
-.win98-grid revo-grid[theme] .header-cell {
+.win98-grid revo-grid[theme] .rgHeaderCell {
   box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #fff, inset -2px -2px #808080, inset 2px 2px #dfdfdf;
 }
 
@@ -124,16 +153,4 @@ body {
   align-items: center;
   justify-content: center;
   z-index: 100;
-}
-
-/* Floating window */
-.floating-window {
-  position: fixed;
-  z-index: 50;
-  resize: both;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  min-width: 320px;
-  min-height: 200px;
 }

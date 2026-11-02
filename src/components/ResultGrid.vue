@@ -2,27 +2,20 @@
 import { shallowRef, watch } from 'vue';
 import VGrid from '@revolist/vue3-datagrid';
 import { guardGridCopy } from '../state';
+import { toGridColumns, toGridSource, type GridColumn } from '../d1';
 
 const props = defineProps<{
   columns: string[];
   rows: unknown[][];
 }>();
 
-const gridColumns = shallowRef<any[]>([]);
+const gridColumns = shallowRef<GridColumn[]>([]);
 const gridSource = shallowRef<Record<string, unknown>[]>([]);
 
 watch(
   () => props.columns,
   (cols) => {
-    gridColumns.value = (cols || []).map((name, i) => ({
-      prop: 'c' + i,
-      name,
-      size: 150,
-      minSize: 50,
-      sortable: true,
-      cellProperties: ({ model, prop }: any) =>
-        model && model[prop] === null ? { class: { 'cell-null': true } } : {},
-    }));
+    gridColumns.value = toGridColumns(cols);
   },
   { immediate: true }
 );
@@ -30,9 +23,7 @@ watch(
 watch(
   () => props.rows,
   (rws) => {
-    gridSource.value = (rws || []).map((r) =>
-      Object.fromEntries(r.map((v, i) => ['c' + i, v]))
-    );
+    gridSource.value = toGridSource(rws);
   },
   { immediate: true }
 );

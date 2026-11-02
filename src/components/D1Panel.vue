@@ -1,10 +1,19 @@
 <script setup lang="ts">
 import { ref, shallowRef, reactive, computed, watch } from 'vue';
-import type { D1Database, TableInfo, TreeNode, IconName } from '../types';
+import type { D1Database, TableInfo, TreeNode } from '../types';
 import { d1ListDatabases, d1LoadSchema, d1Query } from '../api';
-import { status, settingsStatus, settingsVersion, showError, quoteIdent } from '../state';
+import { status, settingsStatus, settingsVersion, showError } from '../state';
+import {
+  buildD1TreeRows,
+  formatQueryStatus,
+  selectTableSql,
+  pickRunText,
+  refreshTargetDbId,
+} from '../d1';
 import TreeView from './TreeView.vue';
 import ResultGrid from './ResultGrid.vue';
+
+let generation = 0;
 
 const databases = ref<D1Database[]>([]);
 const schemas = reactive(new Map<string, TableInfo[]>());
@@ -17,76 +26,9 @@ const result = shallowRef<{ columns: string[]; rows: unknown[][] }>({ columns: [
 const running = ref(false);
 const editor = ref<HTMLTextAreaElement | null>(null);
 
-const treeRows = computed<TreeNode[]>(() => {
-  const rows: TreeNode[] = [];
-
-  const isRootExpanded = expanded.has('root');
-  rows.push({
-    id: 'root',
-    label: 'D1 Databases',
-    icon: 'database',
-    depth: 0,
-    expandable: true,
-    expanded: isRootExpanded,
-    loading: loading.has('root'),
-  });
-
-  if (!isRootExpanded) {
-    return rows;
-  }
-
-  for (const db of databases.value) {
-    const dbNodeId = 'db:' + db.uuid;
-    const isDbExpanded = expanded.has(dbNodeId);
-    rows.push({
-      id: dbNodeId,
-      label: db.name,
-      icon: 'database',
-      depth: 1,
-      expandable: true,
-      expanded: isDbExpanded,
-      loading: loading.has(dbNodeId),
-      data: { dbId: db.uuid },
-    });
-
-    if (isDbExpanded && schemas.has(db.uuid)) {
-      const tables = schemas.get(db.uuid) || [];
-      for (const t of tables) {
-        const tblNodeId = 'tbl:' + db.uuid + ':' + t.name;
-        const isTblExpanded = expanded.has(tblNodeId);
-        const hasCols = Boolean(t.columns && t.columns.length > 0);
-        rows.push({
-          id: tblNodeId,
-          label: t.name,
-          icon: (t.kind === 'view' ? 'view' : 'table') as IconName,
-          depth: 2,
-          expandable: hasCols,
-          expanded: isTblExpanded,
-          loading: false,
-          data: { dbId: db.uuid, table: t.name },
-        });
-
-        if (isTblExpanded && hasCols) {
-          for (const col of t.columns) {
-            const colNodeId = 'col:' + db.uuid + ':' + t.name + ':' + col.name;
-            rows.push({
-              id: colNodeId,
-              label: `${col.name} ${col.col_type}${col.pk ? ' (PK)' : ''}`,
-              icon: 'column',
-              depth: 3,
-              expandable: false,
-              expanded: false,
-              loading: false,
-              data: { dbId: db.uuid },
-            });
-          }
-        }
-      }
-    }
-  }
-
-  return rows;
-});
+const treeRows = computed<TreeNode[]>(() =>
+  buildD1TreeRows(databases.value, schemas, expanded, loading)
+);
 
 async function loadDatabases(): Promise<void> {
   if (!settingsStatus.value.configured) {
@@ -94,11 +36,14 @@ async function loadDatabases(): Promise<void> {
     return;
   }
   loading.add('root');
+  const gen = generation;
   try {
     const dbs = await d1ListDatabases();
+    if (gen !== generation) return;
     databases.value = dbs;
-    status.value = `${dbs.length} database(s)`;
+    status.value = `${dbs.length} databases`;
   } catch (e) {
+    if (gen !== generation) return;
     showError(e);
   } finally {
     loading.delete('root');
@@ -108,6 +53,8 @@ async function loadDatabases(): Promise<void> {
 watch(
   [() => settingsStatus.value.configured, settingsVersion],
   ([configured]) => {
+    generation++;
+    selectedId.value = 'root';
     schemas.clear();
     expanded.clear();
     expanded.add('root');
@@ -121,6 +68,8 @@ watch(
 );
 
 async function onToggle(node: TreeNode): Promise<void> {
+  if (loading.has(node.id)) return;
+
   if (expanded.has(node.id)) {
     expanded.delete(node.id);
     return;
@@ -131,11 +80,14 @@ async function onToggle(node: TreeNode): Promise<void> {
     const dbId = dbData?.dbId;
     if (dbId && !schemas.has(dbId)) {
       loading.add(node.id);
+      const gen = generation;
       try {
         const schema = await d1LoadSchema(dbId);
+        if (gen !== generation) return;
         schemas.set(dbId, schema);
         expanded.add(node.id);
       } catch (e) {
+        if (gen !== generation) return;
         showError(e);
       } finally {
         loading.delete(node.id);
@@ -159,19 +111,27 @@ async function onActivate(node: TreeNode): Promise<void> {
   if (node.id.startsWith('tbl:')) {
     const nodeData = node.data as { dbId?: string; table?: string } | undefined;
     if (nodeData?.table) {
-      sqlText.value = 'SELECT * FROM ' + quoteIdent(nodeData.table) + ' LIMIT 100;';
+      const sql = selectTableSql(nodeData.table);
+      sqlText.value = sql;
+      if (nodeData.dbId) {
+        activeDbId.value = nodeData.dbId;
+      }
+      await run(sql);
+    } else {
+      if (nodeData?.dbId) {
+        activeDbId.value = nodeData.dbId;
+      }
+      await run();
     }
-    if (nodeData?.dbId) {
-      activeDbId.value = nodeData.dbId;
-    }
-    await run();
   } else if (node.id === 'root' || node.id.startsWith('db:')) {
     await onToggle(node);
   }
 }
 
 async function refresh(): Promise<void> {
-  if (!selectedId.value || selectedId.value === 'root') {
+  const dbId = refreshTargetDbId(selectedId.value);
+  if (!dbId) {
+    generation++;
     schemas.clear();
     expanded.clear();
     expanded.add('root');
@@ -179,34 +139,32 @@ async function refresh(): Promise<void> {
     return;
   }
 
-  let dbId: string | null = null;
-  const parts = selectedId.value.split(':');
-  if (parts.length >= 2 && (parts[0] === 'db' || parts[0] === 'tbl' || parts[0] === 'col')) {
-    dbId = parts[1];
-  } else if (activeDbId.value) {
-    dbId = activeDbId.value;
-  }
-
-  if (dbId) {
-    const nodeId = 'db:' + dbId;
-    loading.add(nodeId);
-    try {
-      const schema = await d1LoadSchema(dbId);
-      schemas.set(dbId, schema);
-    } catch (e) {
-      showError(e);
-    } finally {
-      loading.delete(nodeId);
-    }
+  const gen = generation;
+  const nodeId = 'db:' + dbId;
+  loading.add(nodeId);
+  try {
+    const schema = await d1LoadSchema(dbId);
+    if (gen !== generation) return;
+    schemas.set(dbId, schema);
+  } catch (e) {
+    if (gen !== generation) return;
+    showError(e);
+  } finally {
+    loading.delete(nodeId);
   }
 }
 
-async function run(): Promise<void> {
+async function run(textOverride?: string): Promise<void> {
+  if (running.value) return;
+
+  const override = typeof textOverride === 'string' ? textOverride : undefined;
   const ta = editor.value;
   const text =
-    ta && ta.selectionStart !== ta.selectionEnd
-      ? ta.value.slice(ta.selectionStart, ta.selectionEnd)
-      : sqlText.value;
+    override !== undefined
+      ? override
+      : ta && ta.selectionStart !== ta.selectionEnd
+        ? pickRunText(ta.value, ta.selectionStart, ta.selectionEnd)
+        : sqlText.value;
 
   if (!activeDbId.value) {
     showError('Select a database in the tree (or the Database list) first.');
@@ -216,26 +174,20 @@ async function run(): Promise<void> {
   running.value = true;
   status.value = 'Running…';
 
+  const gen = generation;
   try {
     const o = await d1Query(activeDbId.value, text);
+    if (gen !== generation) return;
     result.value = { columns: o.columns, rows: o.rows };
-
-    let msg = '';
-    if (o.statement_count > 1 && o.result_statement) {
-      msg += `Showing result of statement ${o.result_statement} of ${o.statement_count} · `;
-    }
-    if (o.columns.length > 0) {
-      msg += `${o.rows.length} row(s)${o.limit_applied ? ' (auto LIMIT 1000)' : ''} · read ${o.rows_read} · written ${o.rows_written} · ${o.duration_ms.toFixed(1)} ms`;
-    } else {
-      msg += `Executed ${o.statement_count} statement(s) · ${o.changes} row(s) changed · read ${o.rows_read} · written ${o.rows_written} · ${o.duration_ms.toFixed(1)} ms`;
-    }
-    status.value = msg;
+    status.value = formatQueryStatus(o);
   } catch (e) {
+    if (gen !== generation) return;
     showError(e);
   } finally {
     running.value = false;
   }
 }
+
 </script>
 
 <template>
@@ -257,8 +209,8 @@ async function run(): Promise<void> {
     </div>
     <div class="main">
       <div class="toolbar">
-        <button class="default" :disabled="running" @click="run">Run</button>
-        <span class="hint" style="color: #666; font-size: 11px">Ctrl+Enter</span>
+        <button class="default" :disabled="running" @click="() => run()">Run</button>
+        <span class="hint" style="color: #666; font-size: 12px">Ctrl+Enter</span>
         <label style="margin-left: 8px; display: inline-flex; align-items: center; gap: 4px">
           Database:
           <select v-model="activeDbId">
@@ -274,8 +226,8 @@ async function run(): Promise<void> {
         class="sql-editor"
         v-model="sqlText"
         spellcheck="false"
-        @keydown.ctrl.enter.prevent="run"
-        @keydown.meta.enter.prevent="run"
+        @keydown.ctrl.enter.prevent="() => run()"
+        @keydown.meta.enter.prevent="() => run()"
       ></textarea>
       <div class="grid-box win98-grid">
         <ResultGrid :columns="result.columns" :rows="result.rows" />

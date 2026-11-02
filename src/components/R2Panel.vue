@@ -3,11 +3,18 @@ import { ref, reactive, computed, watch } from 'vue';
 import VGrid from '@revolist/vue3-datagrid';
 import { save } from '@tauri-apps/plugin-dialog';
 import { downloadDir, join } from '@tauri-apps/api/path';
-import type { BucketInfo, ObjectInfo, TreeNode } from '../types';
+import type { BucketInfo, TreeNode } from '../types';
+import {
+  type Listing,
+  buildR2TreeRows,
+  pruneForRefresh,
+  applyPage,
+  listingStatus,
+} from '../r2tree';
 import { r2ListBuckets, r2ListObjects, r2Download } from '../api';
 import { status, settingsStatus, settingsVersion, showError, guardGridCopy } from '../state';
 import { formatBytes } from '../format';
-import { ICONS } from '../icons';
+import { buildObjectColumns } from '../r2grid';
 import TreeView from './TreeView.vue';
 import PreviewWindow, { type PreviewTarget } from './PreviewWindow.vue';
 
@@ -16,52 +23,67 @@ const props = defineProps<{
 }>();
 
 const buckets = ref<BucketInfo[] | null>(null);
-const listings = reactive(
-  new Map<
-    string,
-    {
-      prefixes: string[];
-      objects: ObjectInfo[];
-      nextToken: string | null;
-      loading: boolean;
-    }
-  >()
-);
+const listings = reactive(new Map<string, Listing>());
 const expanded = reactive(new Set<string>(['root']));
 const selectedId = ref('root');
 const current = ref<{ bucket: string; prefix: string } | null>(null);
 const previewTarget = ref<PreviewTarget | null>(null);
 
-async function loadBuckets() {
-  if (buckets.value !== null) return;
-  try {
-    buckets.value = await r2ListBuckets();
-  } catch (err) {
-    showError(err);
-  }
-}
+let generation = 0;
+let inFlightBuckets = false;
 
-watch(
-  [() => props.active, () => settingsStatus.value.configured, () => settingsStatus.value.r2_configured],
-  ([active, configured, r2Configured]) => {
-    if (active && configured && r2Configured && buckets.value === null) {
-      loadBuckets();
-    }
-  },
-  { immediate: true }
-);
-
-watch(settingsVersion, () => {
+function resetAll() {
+  generation++;
+  inFlightBuckets = false;
   buckets.value = null;
   listings.clear();
   expanded.clear();
   expanded.add('root');
   current.value = null;
   previewTarget.value = null;
-  if (props.active && settingsStatus.value.configured && settingsStatus.value.r2_configured) {
-    loadBuckets();
+  selectedId.value = 'root';
+}
+
+async function loadBuckets() {
+  if (inFlightBuckets || buckets.value !== null) return;
+  inFlightBuckets = true;
+  const currentGen = generation;
+  try {
+    const result = await r2ListBuckets();
+    if (generation === currentGen) {
+      buckets.value = result;
+    }
+  } catch (err) {
+    if (generation === currentGen) {
+      showError(err);
+    }
+  } finally {
+    if (generation === currentGen) {
+      inFlightBuckets = false;
+    }
   }
-});
+}
+
+let lastSettingsVersion = settingsVersion.value;
+
+watch(
+  [
+    () => props.active,
+    () => settingsStatus.value.configured,
+    () => settingsStatus.value.r2_configured,
+    settingsVersion,
+  ],
+  ([active, configured, r2Configured, ver]) => {
+    if (ver !== lastSettingsVersion) {
+      lastSettingsVersion = ver;
+      resetAll();
+    }
+    if (active && configured && r2Configured && buckets.value === null) {
+      loadBuckets();
+    }
+  },
+  { immediate: true }
+);
 
 async function loadListing(bucket: string, prefix: string, more = false) {
   const key = `${bucket}\0${prefix}`;
@@ -71,136 +93,49 @@ async function loadListing(bucket: string, prefix: string, more = false) {
   if (!more && existing) return;
   if (more && (!existing || !existing.nextToken)) return;
 
+  let entry: Listing;
+  let isNew = false;
   if (existing) {
     existing.loading = true;
+    entry = existing;
   } else {
+    isNew = true;
     listings.set(key, {
       prefixes: [],
       objects: [],
       nextToken: null,
       loading: true,
     });
+    entry = listings.get(key)!;
   }
 
   try {
-    const continuationToken = more ? (existing?.nextToken ?? null) : null;
+    const continuationToken = more ? (entry.nextToken ?? null) : null;
     const page = await r2ListObjects(bucket, prefix, continuationToken);
-    const entry = listings.get(key)!;
 
-    if (more) {
-      const newPrefixes = [...entry.prefixes];
-      for (const p of page.prefixes) {
-        if (!newPrefixes.includes(p)) {
-          newPrefixes.push(p);
-        }
-      }
-      entry.prefixes = newPrefixes;
-      entry.objects = [...entry.objects, ...page.objects];
-    } else {
-      entry.prefixes = page.prefixes;
-      entry.objects = page.objects;
-    }
+    if (listings.get(key) !== entry) return;
 
-    entry.nextToken = page.next_token;
+    applyPage(entry, page, more);
     entry.loading = false;
 
-    status.value = `${entry.objects.length} objects, ${entry.prefixes.length} folders${
-      entry.nextToken ? ' (more available)' : ''
-    }`;
+    if (current.value?.bucket === bucket && current.value?.prefix === prefix) {
+      status.value = listingStatus(entry);
+    }
   } catch (err) {
-    const entry = listings.get(key);
-    if (entry) entry.loading = false;
-    showError(err);
+    if (listings.get(key) === entry) {
+      if (isNew) {
+        listings.delete(key);
+      } else {
+        entry.loading = false;
+      }
+      showError(err);
+    }
   }
 }
 
-function appendPrefixRows(bucket: string, parentPrefix: string, depth: number, rows: TreeNode[]) {
-  const listingKey = `${bucket}\0${parentPrefix}`;
-  const listing = listings.get(listingKey);
-  if (!listing) return;
-
-  for (const prefix of listing.prefixes) {
-    const prefixId = `p:${bucket}\0${prefix}`;
-    const isExpanded = expanded.has(prefixId);
-    const childListingKey = `${bucket}\0${prefix}`;
-    const childListing = listings.get(childListingKey);
-    const isLoading = childListing?.loading ?? false;
-    const label = prefix.slice(parentPrefix.length);
-
-    rows.push({
-      id: prefixId,
-      label,
-      icon: 'folder',
-      depth: depth + 1,
-      expandable: true,
-      expanded: isExpanded,
-      loading: isLoading,
-      data: { bucket, prefix },
-    });
-
-    if (isExpanded && childListing) {
-      appendPrefixRows(bucket, prefix, depth + 1, rows);
-    }
-  }
-
-  if (listing.nextToken) {
-    rows.push({
-      id: `more:${bucket}\0${parentPrefix}`,
-      label: '(more…)',
-      icon: 'more',
-      depth: depth + 1,
-      expandable: false,
-      expanded: false,
-      loading: listing.loading,
-      data: { bucket, prefix: parentPrefix, more: true },
-    });
-  }
-}
-
-const treeRows = computed<TreeNode[]>(() => {
-  const rows: TreeNode[] = [];
-  const rootExpanded = expanded.has('root');
-
-  rows.push({
-    id: 'root',
-    label: 'R2 Buckets',
-    icon: 'bucket',
-    depth: 0,
-    expandable: true,
-    expanded: rootExpanded,
-    loading: false,
-    data: null,
-  });
-
-  if (!rootExpanded || !buckets.value) {
-    return rows;
-  }
-
-  for (const b of buckets.value) {
-    const bucketId = `b:${b.name}`;
-    const isBucketExpanded = expanded.has(bucketId);
-    const rootListingKey = `${b.name}\0`;
-    const rootListing = listings.get(rootListingKey);
-    const isLoading = rootListing?.loading ?? false;
-
-    rows.push({
-      id: bucketId,
-      label: b.name,
-      icon: 'bucket',
-      depth: 1,
-      expandable: true,
-      expanded: isBucketExpanded,
-      loading: isLoading,
-      data: { bucket: b.name, prefix: '' },
-    });
-
-    if (isBucketExpanded && rootListing) {
-      appendPrefixRows(b.name, '', 1, rows);
-    }
-  }
-
-  return rows;
-});
+const treeRows = computed<TreeNode[]>(() =>
+  buildR2TreeRows(buckets.value, listings, expanded)
+);
 
 async function onToggle(node: TreeNode) {
   if (node.id === 'root') {
@@ -222,7 +157,9 @@ async function onToggle(node: TreeNode) {
     if (!listings.has(key)) {
       await loadListing(data.bucket, data.prefix);
     }
-    expanded.add(node.id);
+    if (listings.has(key)) {
+      expanded.add(node.id);
+    }
   }
 }
 
@@ -251,35 +188,42 @@ async function onActivate(node: TreeNode) {
 
 async function refresh() {
   if (selectedId.value === 'root') {
-    buckets.value = null;
-    listings.clear();
-    expanded.clear();
-    expanded.add('root');
-    current.value = null;
-    previewTarget.value = null;
+    resetAll();
     await loadBuckets();
     return;
   }
 
-  const selNode = treeRows.value.find((r) => r.id === selectedId.value);
-  const data = selNode?.data as { bucket: string; prefix: string } | undefined;
-  if (!data || !data.bucket) return;
-
-  const prefixKey = `${data.bucket}\0${data.prefix}`;
-  for (const k of Array.from(listings.keys())) {
-    if (k.startsWith(prefixKey)) {
-      listings.delete(k);
+  let target: { bucket: string; prefix: string } | null = null;
+  if (selectedId.value.startsWith('b:')) {
+    target = { bucket: selectedId.value.slice(2), prefix: '' };
+  } else if (selectedId.value.startsWith('p:')) {
+    const idx = selectedId.value.indexOf('\0');
+    if (idx !== -1) {
+      target = {
+        bucket: selectedId.value.slice(2, idx),
+        prefix: selectedId.value.slice(idx + 1),
+      };
     }
   }
 
-  const expPrefix = `p:${data.bucket}\0${data.prefix}`;
-  for (const id of Array.from(expanded)) {
-    if (id.startsWith(expPrefix) && id !== selectedId.value) {
-      expanded.delete(id);
-    }
+  if (!target) return;
+
+  const { deleteKeys, deleteExpanded } = pruneForRefresh(
+    Array.from(listings.keys()),
+    Array.from(expanded),
+    target.bucket,
+    target.prefix,
+    selectedId.value
+  );
+
+  for (const k of deleteKeys) {
+    listings.delete(k);
+  }
+  for (const id of deleteExpanded) {
+    expanded.delete(id);
   }
 
-  await loadListing(data.bucket, data.prefix);
+  await loadListing(target.bucket, target.prefix);
 }
 
 const pathLabel = computed(() => {
@@ -343,48 +287,7 @@ async function download(row: { key: string; size: number }) {
   }
 }
 
-const objectColumns = [
-  {
-    prop: 'name',
-    name: 'Name',
-    size: 320,
-    sortable: true,
-  },
-  {
-    prop: 'size',
-    name: 'Size',
-    size: 100,
-    sortable: true,
-    cellTemplate: (h: any, p: any) => h('span', formatBytes(p.model.size)),
-  },
-  {
-    prop: 'last_modified',
-    name: 'Last Modified',
-    size: 190,
-    sortable: true,
-  },
-  {
-    prop: 'key',
-    name: 'Actions',
-    size: 64,
-    sortable: false,
-    cellTemplate: (h: any, p: any) =>
-      h('span', { class: 'obj-actions' }, [
-        h('button', {
-          class: 'icon-btn',
-          title: 'Preview',
-          innerHTML: ICONS.magnify,
-          onClick: () => openPreview(p.model),
-        }),
-        h('button', {
-          class: 'icon-btn',
-          title: 'Download',
-          innerHTML: ICONS.download,
-          onClick: () => download(p.model),
-        }),
-      ]),
-  },
-];
+const objectColumns = buildObjectColumns({ openPreview, download });
 </script>
 
 <template>

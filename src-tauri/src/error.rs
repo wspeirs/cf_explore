@@ -15,3 +15,23 @@ impl serde::Serialize for CmdError {
 }
 
 pub type CmdResult<T> = Result<T, CmdError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cmd_error_serialization() {
+        assert_eq!(
+            serde_json::to_string(&CmdError::from(anyhow::anyhow!("a").context("b"))).unwrap(),
+            "\"b: a\""
+        );
+        assert_eq!(
+            serde_json::to_string(&CmdError::from(std::io::Error::other(
+                "x"
+            )))
+            .unwrap(),
+            "\"x\""
+        );
+    }
+}

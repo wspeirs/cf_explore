@@ -1,28 +1,8 @@
 <script lang="ts">
-const MAX_CACHE_ENTRIES = 16;
+import { createPreviewCache } from '../preview';
+
 // Module-level previewCache keyed by `${bucket}\n${key}\n${etag}` (LRU max 16 entries)
-const previewCache = new Map<string, Uint8Array>();
-
-function getCache(key: string): Uint8Array | undefined {
-  if (!previewCache.has(key)) return undefined;
-  const val = previewCache.get(key)!;
-  previewCache.delete(key);
-  previewCache.set(key, val);
-  return val;
-}
-
-function setCache(key: string, data: Uint8Array): void {
-  if (previewCache.has(key)) {
-    previewCache.delete(key);
-  }
-  previewCache.set(key, data);
-  if (previewCache.size > MAX_CACHE_ENTRIES) {
-    const oldestKey = previewCache.keys().next().value;
-    if (oldestKey !== undefined) {
-      previewCache.delete(oldestKey);
-    }
-  }
-}
+const previewCache = createPreviewCache(16);
 </script>
 
 <script setup lang="ts">
@@ -30,7 +10,7 @@ import { ref, computed, shallowRef, watch } from 'vue';
 import { r2GetRange } from '../api';
 import { showError } from '../state';
 import { decodePreview } from '../format';
-
+import { initialRange, showMoreRange } from '../preview';
 export interface PreviewTarget {
   bucket: string;
   key: string;
@@ -91,8 +71,8 @@ function onPointerUp(e: PointerEvent) {
 // Data loading
 const bytes = shallowRef<Uint8Array>(new Uint8Array(0));
 const loaded = computed(() => bytes.value.length);
+const loading = ref(false);
 let requestSeq = 0;
-
 const previewResult = computed(() => {
   if (!props.target) {
     return { kind: 'text', kindLabel: 'Text (UTF-8)', text: '' };
@@ -110,25 +90,41 @@ const previewResult = computed(() => {
 });
 
 async function loadTarget(t: PreviewTarget | null) {
+  const curSeq = ++requestSeq;
+  bytes.value = new Uint8Array(0);
+
   if (!t) {
-    bytes.value = new Uint8Array(0);
+    if (curSeq === requestSeq) {
+      loading.value = false;
+    }
     return;
   }
   if (t.size === 0) {
-    bytes.value = new Uint8Array(0);
+    if (curSeq === requestSeq) {
+      loading.value = false;
+    }
     return;
   }
   const cacheKey = `${t.bucket}\n${t.key}\n${t.etag}`;
-  const cached = getCache(cacheKey);
+  const cached = previewCache.get(cacheKey);
   if (cached) {
     bytes.value = cached;
+    if (curSeq === requestSeq) {
+      loading.value = false;
+    }
     return;
   }
-  const curSeq = ++requestSeq;
+  const range = initialRange(t.size);
+  if (!range) {
+    if (curSeq === requestSeq) {
+      loading.value = false;
+    }
+    return;
+  }
+  loading.value = true;
   try {
-    const end = Math.min(t.size, 4096) - 1;
-    const chunk = await r2GetRange(t.bucket, t.key, 0, end);
-    setCache(cacheKey, chunk);
+    const chunk = await r2GetRange(t.bucket, t.key, range[0], range[1]);
+    previewCache.set(cacheKey, chunk);
     if (curSeq === requestSeq) {
       bytes.value = chunk;
     }
@@ -136,29 +132,40 @@ async function loadTarget(t: PreviewTarget | null) {
     if (curSeq === requestSeq) {
       showError(err);
     }
+  } finally {
+    if (curSeq === requestSeq) {
+      loading.value = false;
+    }
   }
 }
 
 async function showMore() {
+  if (loading.value) return;
   const t = props.target;
   if (!t || t.size === 0) return;
-  const curLoaded = bytes.value.length;
-  const maxEnd = Math.min(t.size, 1048576) - 1;
-  if (curLoaded > maxEnd) return;
+  const base = bytes.value;
+  const range = showMoreRange(t.size, base.length);
+  if (!range) return;
+
   const cacheKey = `${t.bucket}\n${t.key}\n${t.etag}`;
   const curSeq = ++requestSeq;
+  loading.value = true;
   try {
-    const chunk = await r2GetRange(t.bucket, t.key, curLoaded, maxEnd);
-    const combined = new Uint8Array(curLoaded + chunk.length);
-    combined.set(bytes.value, 0);
-    combined.set(chunk, curLoaded);
-    setCache(cacheKey, combined);
+    const chunk = await r2GetRange(t.bucket, t.key, range[0], range[1]);
+    const combined = new Uint8Array(base.length + chunk.length);
+    combined.set(base, 0);
+    combined.set(chunk, base.length);
+    previewCache.set(cacheKey, combined);
     if (curSeq === requestSeq) {
       bytes.value = combined;
     }
   } catch (err) {
     if (curSeq === requestSeq) {
       showError(err);
+    }
+  } finally {
+    if (curSeq === requestSeq) {
+      loading.value = false;
     }
   }
 }
@@ -194,7 +201,7 @@ watch(
       <div class="preview-info">
         <span>Showing {{ loaded }} of {{ target?.size ?? 0 }} bytes · {{ previewResult.kindLabel }}</span>
         <a
-          v-if="loaded < Math.min(target?.size ?? 0, 1048576)"
+          v-if="!loading && loaded < Math.min(target?.size ?? 0, 1048576)"
           href="#"
           @click.prevent="showMore"
         >Show More...</a>
@@ -245,7 +252,7 @@ watch(
   white-space: pre-wrap;
   background: #fff;
   padding: 4px;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
 }
 </style>

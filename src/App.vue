@@ -15,8 +15,8 @@ const showSettings = ref(false);
 const showAbout = ref(false);
 const appVersion = ref('');
 const errorOkBtn = ref<HTMLButtonElement | null>(null);
+let disposed = false;
 let unlistenMenu: UnlistenFn | null = null;
-
 function runEditCommand(cmd: string) {
   if (!document.execCommand(cmd)) {
     status.value = 'Clipboard command unavailable; use Ctrl+X / Ctrl+C / Ctrl+V';
@@ -33,7 +33,7 @@ watch(errorDialog, (val) => {
 
 onMounted(async () => {
   try {
-    unlistenMenu = await listen<string>('menu', (e) => {
+    const unlisten = await listen<string>('menu', (e) => {
       const payload = e.payload;
       if (payload === 'settings') {
         showSettings.value = true;
@@ -43,6 +43,11 @@ onMounted(async () => {
         runEditCommand(payload);
       }
     });
+    if (disposed) {
+      unlisten();
+    } else {
+      unlistenMenu = unlisten;
+    }
   } catch (err) {
     console.error('Failed to register menu listener', err);
   }
@@ -50,7 +55,7 @@ onMounted(async () => {
   try {
     appVersion.value = await getVersion();
   } catch {
-    appVersion.value = '0.1.0';
+    // leave version empty on failure
   }
 
   try {
@@ -66,6 +71,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  disposed = true;
   if (unlistenMenu) {
     unlistenMenu();
     unlistenMenu = null;
@@ -96,7 +102,7 @@ onUnmounted(() => {
 
   <Win98Dialog v-if="showAbout" title="About cf_explore" @close="showAbout = false">
     <div style="display: flex; flex-direction: column; gap: 8px;">
-      <div><strong>cf_explore v{{ appVersion }}</strong></div>
+      <div><strong>cf_explore{{ appVersion ? ` v${appVersion}` : '' }}</strong></div>
       <div>
         A lightweight explorer for Cloudflare D1 databases and R2 buckets. Run SQL against D1 (UPDATE/DELETE require a WHERE clause) and browse, preview, and download R2 objects (read-only). Built with Tauri, Vue and Rust.
       </div>

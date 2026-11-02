@@ -53,3 +53,64 @@ impl AppState {
         conf.s3.clone().context("R2 credentials are not configured. Open File > Settings... to add an R2 Access Key ID and Secret Access Key.")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_app_state() {
+        tauri::async_runtime::block_on(async {
+            let state = AppState::new().unwrap();
+
+            // unconfigured
+            let d1_err = state.d1_ctx().err().expect("an unconfigured state must not produce a D1 context");
+            assert_eq!(
+                d1_err.to_string(),
+                "Cloudflare settings are not configured. Open File > Settings... to add them."
+            );
+            let s3_err = state.s3().unwrap_err();
+            assert_eq!(
+                s3_err.to_string(),
+                "Cloudflare settings are not configured. Open File > Settings... to add them."
+            );
+
+            // configured without R2
+            let s_no_r2 = Settings {
+                account_id: "0123456789abcdef0123456789abcdef".to_string(),
+                api_token: "test_token".to_string(),
+                r2_access_key_id: String::new(),
+                r2_secret_access_key: String::new(),
+            };
+            state.configure(s_no_r2.clone());
+
+            let d1 = state.d1_ctx().unwrap();
+            assert_eq!(d1.account_id, s_no_r2.account_id);
+            assert_eq!(d1.api_token, s_no_r2.api_token);
+
+            let s3_err_no_r2 = state.s3().unwrap_err();
+            assert_eq!(
+                s3_err_no_r2.to_string(),
+                "R2 credentials are not configured. Open File > Settings... to add an R2 Access Key ID and Secret Access Key."
+            );
+
+            // configured with R2
+            let s_with_r2 = Settings {
+                account_id: "0123456789abcdef0123456789abcdef".to_string(),
+                api_token: "test_token".to_string(),
+                r2_access_key_id: "test_r2_key".to_string(),
+                r2_secret_access_key: "test_r2_secret".to_string(),
+            };
+            state.configure(s_with_r2);
+            assert!(state.s3().is_ok());
+
+            // then configure again without R2 -> s3() returns the R2 message again
+            state.configure(s_no_r2);
+            let s3_err_reverted = state.s3().unwrap_err();
+            assert_eq!(
+                s3_err_reverted.to_string(),
+                "R2 credentials are not configured. Open File > Settings... to add an R2 Access Key ID and Secret Access Key."
+            );
+        });
+    }
+}
