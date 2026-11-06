@@ -1,3 +1,4 @@
+import { formatBytes } from './format';
 import type { BucketInfo, ListPage, ObjectInfo, TreeNode } from './types';
 
 export interface Listing {
@@ -13,22 +14,7 @@ export function buildR2TreeRows(
   expanded: Set<string>
 ): TreeNode[] {
   const rows: TreeNode[] = [];
-  const rootExpanded = expanded.has('root');
-
-  rows.push({
-    id: 'root',
-    label: 'R2 Buckets',
-    icon: 'bucket',
-    depth: 0,
-    expandable: true,
-    expanded: rootExpanded,
-    loading: false,
-    data: null,
-  });
-
-  if (!rootExpanded || !buckets) {
-    return rows;
-  }
+  if (!buckets) return rows;
 
   function appendPrefixRows(bucket: string, parentPrefix: string, depth: number) {
     const listingKey = `${bucket}\0${parentPrefix}`;
@@ -84,7 +70,7 @@ export function buildR2TreeRows(
       id: bucketId,
       label: b.name,
       icon: 'bucket',
-      depth: 1,
+      depth: 0,
       expandable: true,
       expanded: isBucketExpanded,
       loading: isLoading,
@@ -92,7 +78,7 @@ export function buildR2TreeRows(
     });
 
     if (isBucketExpanded && rootListing) {
-      appendPrefixRows(b.name, '', 1);
+      appendPrefixRows(b.name, '', 0);
     }
   }
 
@@ -135,6 +121,7 @@ export function applyPage(entry: Listing, page: ListPage, more: boolean): void {
 }
 
 export function listingStatus(entry: Listing): string {
-  const base = `${entry.objects.length} objects, ${entry.prefixes.length} folders`;
+  const total = entry.objects.reduce((sum, o) => sum + o.size, 0);
+  const base = `${entry.objects.length} objects, ${entry.prefixes.length} folders, ${formatBytes(total)} total`;
   return entry.nextToken ? `${base} (more available)` : base;
 }

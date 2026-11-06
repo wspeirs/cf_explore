@@ -1,11 +1,20 @@
 use anyhow::Context;
 use tauri::Manager;
 
+static DEBUG: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| std::env::args().any(|a| a == "--debug"));
+
+/// True when launched with `--debug`.
+pub fn debug_enabled() -> bool {
+    *DEBUG
+}
+
 #[macro_export]
 macro_rules! log_call {
     ($($a:tt)*) => {
-        #[cfg(debug_assertions)]
-        eprintln!("[cf_explore] API call: {}", format_args!($($a)*));
+        if $crate::debug_enabled() {
+            eprintln!("[cf_explore] API call: {}", format_args!($($a)*));
+        }
     };
 }
 

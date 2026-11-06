@@ -10,34 +10,22 @@ import type { BucketInfo, ListPage } from './types';
 
 describe('r2tree helpers', () => {
   describe('buildR2TreeRows', () => {
-    it('returns only root when buckets is null', () => {
-      const rows = buildR2TreeRows(null, new Map(), new Set(['root']));
-      expect(rows).toEqual([
-        {
-          id: 'root',
-          label: 'R2 Buckets',
-          icon: 'bucket',
-          depth: 0,
-          expandable: true,
-          expanded: true,
-          loading: false,
-          data: null,
-        },
-      ]);
+    it('returns no rows when buckets is null', () => {
+      expect(buildR2TreeRows(null, new Map(), new Set())).toEqual([]);
     });
 
-    it('returns only root and b:b when b:b is collapsed', () => {
+    it('returns only b:b when b:b is collapsed', () => {
       const buckets: BucketInfo[] = [{ name: 'b', created: null }];
       const listings = new Map<string, Listing>();
-      const expanded = new Set(['root']);
+      const expanded = new Set<string>();
 
       const rows = buildR2TreeRows(buckets, listings, expanded);
-      expect(rows.map((r) => r.id)).toEqual(['root', 'b:b']);
-      expect(rows[1]).toMatchObject({
+      expect(rows.map((r) => r.id)).toEqual(['b:b']);
+      expect(rows[0]).toMatchObject({
         id: 'b:b',
         label: 'b',
         icon: 'bucket',
-        depth: 1,
+        depth: 0,
         expandable: true,
         expanded: false,
         data: { bucket: 'b', prefix: '' },
@@ -57,11 +45,10 @@ describe('r2tree helpers', () => {
           },
         ],
       ]);
-      const expanded = new Set(['root', 'b:b']);
+      const expanded = new Set(['b:b']);
 
       const rows = buildR2TreeRows(buckets, listings, expanded);
       expect(rows.map((r) => r.id)).toEqual([
-        'root',
         'b:b',
         'p:b\u0000x/',
         'more:b\u0000',
@@ -69,13 +56,13 @@ describe('r2tree helpers', () => {
 
       const folderRow = rows.find((r) => r.id === 'p:b\u0000x/')!;
       expect(folderRow.label).toBe('x/');
-      expect(folderRow.depth).toBe(2);
+      expect(folderRow.depth).toBe(1);
 
       const moreRow = rows.find((r) => r.id === 'more:b\u0000')!;
       expect(moreRow.data).toEqual({ bucket: 'b', prefix: '', more: true });
     });
 
-    it('renders recursive folder children at depth 3', () => {
+    it('renders recursive folder children at depth 2', () => {
       const buckets: BucketInfo[] = [{ name: 'b', created: null }];
       const listings = new Map<string, Listing>([
         [
@@ -97,13 +84,13 @@ describe('r2tree helpers', () => {
           },
         ],
       ]);
-      const expanded = new Set(['root', 'b:b', 'p:b\u0000x/']);
+      const expanded = new Set(['b:b', 'p:b\u0000x/']);
 
       const rows = buildR2TreeRows(buckets, listings, expanded);
       const childRow = rows.find((r) => r.id === 'p:b\u0000x/y/')!;
       expect(childRow).toBeDefined();
       expect(childRow.label).toBe('y/');
-      expect(childRow.depth).toBe(3);
+      expect(childRow.depth).toBe(2);
     });
   });
 
@@ -223,7 +210,7 @@ describe('r2tree helpers', () => {
         nextToken: 'has-more',
         loading: false,
       };
-      expect(listingStatus(entry)).toBe('2 objects, 1 folders (more available)');
+      expect(listingStatus(entry)).toBe('2 objects, 1 folders, 3 B total (more available)');
     });
 
     it('formats status without suffix when nextToken is null', () => {
@@ -236,7 +223,7 @@ describe('r2tree helpers', () => {
         nextToken: null,
         loading: false,
       };
-      expect(listingStatus(entry)).toBe('2 objects, 1 folders');
+      expect(listingStatus(entry)).toBe('2 objects, 1 folders, 3 B total');
     });
   });
 });

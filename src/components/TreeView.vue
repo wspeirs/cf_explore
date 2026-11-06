@@ -13,6 +13,7 @@ const emit = defineEmits<{
   (e: 'toggle', node: TreeNode): void;
   (e: 'select', node: TreeNode): void;
   (e: 'activate', node: TreeNode): void;
+  (e: 'expandAll', node: TreeNode): void;
 }>();
 
 const scrollRef = ref<HTMLDivElement | null>(null);
@@ -139,5 +140,12 @@ const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>(
 .tree-label.selected {
   background: #000080;
   color: #ffffff;
+}
+
+.tree-expand-all {
+  margin-left: 6px;
+  padding: 0 3px;
+  cursor: pointer;
+  font-size: var(--font-size-ui, 12px);
 }
 </style>

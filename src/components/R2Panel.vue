@@ -14,7 +14,7 @@ import {
 import { r2ListBuckets, r2ListObjects, r2Download } from '../api';
 import { status, settingsStatus, settingsVersion, showError, guardGridCopy } from '../state';
 import { formatBytes } from '../format';
-import { buildObjectColumns } from '../r2grid';
+import { buildObjectColumns, type ObjectRow } from '../r2grid';
 import TreeView from './TreeView.vue';
 import PreviewWindow, { type PreviewTarget } from './PreviewWindow.vue';
 
@@ -24,8 +24,8 @@ const props = defineProps<{
 
 const buckets = ref<BucketInfo[] | null>(null);
 const listings = reactive(new Map<string, Listing>());
-const expanded = reactive(new Set<string>(['root']));
-const selectedId = ref('root');
+const expanded = reactive(new Set<string>());
+const selectedId = ref('');
 const current = ref<{ bucket: string; prefix: string } | null>(null);
 const previewTarget = ref<PreviewTarget | null>(null);
 
@@ -38,10 +38,9 @@ function resetAll() {
   buckets.value = null;
   listings.clear();
   expanded.clear();
-  expanded.add('root');
   current.value = null;
   previewTarget.value = null;
-  selectedId.value = 'root';
+  selectedId.value = '';
 }
 
 async function loadBuckets() {
@@ -138,15 +137,6 @@ const treeRows = computed<TreeNode[]>(() =>
 );
 
 async function onToggle(node: TreeNode) {
-  if (node.id === 'root') {
-    if (expanded.has('root')) {
-      expanded.delete('root');
-    } else {
-      expanded.add('root');
-    }
-    return;
-  }
-
   const data = node.data as { bucket: string; prefix: string; more?: boolean } | undefined;
   if (!data) return;
 
@@ -175,6 +165,10 @@ async function onSelect(node: TreeNode) {
 
   current.value = { bucket: data.bucket, prefix: data.prefix };
   await loadListing(data.bucket, data.prefix);
+  const entry = listings.get(`${data.bucket}\0${data.prefix}`);
+  if (entry && !entry.loading && current.value?.bucket === data.bucket && current.value?.prefix === data.prefix) {
+    status.value = listingStatus(entry);
+  }
 }
 
 async function onActivate(node: TreeNode) {
@@ -186,34 +180,49 @@ async function onActivate(node: TreeNode) {
   await onToggle(node);
 }
 
+async function openFolder(bucket: string, prefix: string) {
+  expanded.add(`b:${bucket}`);
+  let p = '';
+  for (const part of prefix.split('/').filter(Boolean)) {
+    p += `${part}/`;
+    expanded.add(`p:${bucket}\0${p}`);
+  }
+  focusedRow = null;
+  await onSelect({
+    id: prefix ? `p:${bucket}\0${prefix}` : `b:${bucket}`,
+    data: { bucket, prefix },
+  } as TreeNode);
+}
+
+let focusedRow: ObjectRow | null = null;
+
+function onGridFocus(e: CustomEvent) {
+  focusedRow = (e.detail?.model as ObjectRow | undefined) ?? null;
+}
+
+function onGridDblclick(e: MouseEvent) {
+  if ((e.target as HTMLElement).closest('revogr-header')) return;
+  if (focusedRow?.dir && current.value) {
+    openFolder(current.value.bucket, focusedRow.key);
+  }
+}
+
+// Refreshes the directory shown in the grid (not merely the selected tree node).
 async function refresh() {
-  if (selectedId.value === 'root') {
+  const cur = current.value;
+  if (!cur) {
     resetAll();
     await loadBuckets();
     return;
   }
 
-  let target: { bucket: string; prefix: string } | null = null;
-  if (selectedId.value.startsWith('b:')) {
-    target = { bucket: selectedId.value.slice(2), prefix: '' };
-  } else if (selectedId.value.startsWith('p:')) {
-    const idx = selectedId.value.indexOf('\0');
-    if (idx !== -1) {
-      target = {
-        bucket: selectedId.value.slice(2, idx),
-        prefix: selectedId.value.slice(idx + 1),
-      };
-    }
-  }
-
-  if (!target) return;
-
+  const selfId = cur.prefix ? `p:${cur.bucket}\0${cur.prefix}` : `b:${cur.bucket}`;
   const { deleteKeys, deleteExpanded } = pruneForRefresh(
     Array.from(listings.keys()),
     Array.from(expanded),
-    target.bucket,
-    target.prefix,
-    selectedId.value
+    cur.bucket,
+    cur.prefix,
+    selfId
   );
 
   for (const k of deleteKeys) {
@@ -223,7 +232,7 @@ async function refresh() {
     expanded.delete(id);
   }
 
-  await loadListing(target.bucket, target.prefix);
+  await loadListing(cur.bucket, cur.prefix);
 }
 
 const pathLabel = computed(() => {
@@ -231,19 +240,29 @@ const pathLabel = computed(() => {
   return `${current.value.bucket}/${current.value.prefix}`;
 });
 
-const objectRows = computed(() => {
+const objectRows = computed<ObjectRow[]>(() => {
   if (!current.value) return [];
   const key = `${current.value.bucket}\0${current.value.prefix}`;
   const listing = listings.get(key);
   if (!listing) return [];
   const prefixLen = current.value.prefix.length;
-  return listing.objects.map((obj) => ({
+  const dirs = listing.prefixes.map((p) => ({
+    name: p.slice(prefixLen),
+    size: 0,
+    last_modified: '',
+    key: p,
+    etag: null,
+    dir: true,
+  }));
+  const files = listing.objects.map((obj) => ({
     name: obj.key.slice(prefixLen),
     size: obj.size,
     last_modified: obj.last_modified ?? '',
     key: obj.key,
     etag: obj.etag,
+    dir: false,
   }));
+  return [...dirs, ...files];
 });
 
 const hasNextToken = computed(() => {
@@ -320,6 +339,8 @@ const objectColumns = buildObjectColumns({ openPreview, download });
         <VGrid
           :source="objectRows"
           :columns="objectColumns"
+          @beforecellfocus="onGridFocus"
+          @dblclick="onGridDblclick"
           :readonly="true"
           :resize="true"
           theme="default"
@@ -361,5 +382,11 @@ const objectColumns = buildObjectColumns({ openPreview, download });
   align-items: center;
   gap: 2px;
   height: 100%;
+}
+
+:deep(.dir-name) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 </style>

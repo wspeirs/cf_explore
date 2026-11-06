@@ -340,7 +340,7 @@ describe('R2Panel', () => {
     // Must not set errorDialog
     expect(errorDialog.value).toBeNull();
     // Status text matches the fresh listing
-    expect(status.value).toBe('1 objects, 1 folders');
+    expect(status.value).toBe('1 objects, 1 folders, 100 B total');
 
     // Expand b1 to verify only fresh/ is present
     await wrapper.find('[data-toggle-id="b:b1"]').trigger('click');
@@ -372,7 +372,7 @@ describe('R2Panel', () => {
 
     expect(r2ListObjects).toHaveBeenCalledTimes(1);
     expect(r2ListObjects).toHaveBeenLastCalledWith('b1', '', null);
-    expect(status.value).toBe('1 objects, 1 folders (more available)');
+    expect(status.value).toBe('1 objects, 1 folders, 10 B total (more available)');
 
     const moreRow = wrapper.find('[data-id="more:b1\0"]');
     expect(moreRow.exists()).toBe(true);
@@ -390,7 +390,7 @@ describe('R2Panel', () => {
 
     expect(r2ListObjects).toHaveBeenCalledTimes(2);
     expect(r2ListObjects).toHaveBeenLastCalledWith('b1', '', 'tok-123');
-    expect(status.value).toBe('2 objects, 2 folders');
+    expect(status.value).toBe('2 objects, 2 folders, 30 B total');
   });
 
   it('refreshes a selected node even when its parent is collapsed', async () => {
@@ -490,12 +490,14 @@ describe('R2Panel', () => {
 
     expect(wrapper.find('.path-label').text()).toBe('b1/');
     expect(vgrid.props('source')).toEqual([
+      { name: 'dir/', size: 0, last_modified: '', key: 'dir/', etag: null, dir: true },
       {
         name: 'root.txt',
         size: 1024,
         last_modified: '2025-01-01T00:00:00Z',
         key: 'root.txt',
         etag: 'e0',
+        dir: false,
       },
     ]);
 
@@ -522,8 +524,56 @@ describe('R2Panel', () => {
         last_modified: '2025-01-01T00:00:00Z',
         key: 'dir/report.csv',
         etag: 'e1',
+        dir: false,
       },
     ]);
+  });
+
+  it('double-clicking a folder row in the grid opens it, selects it in the tree, and refresh then shows new files', async () => {
+    settingsStatus.value = { settings: null, configured: true, r2_configured: true };
+    settingsVersion.value = 0;
+    vi.mocked(r2ListBuckets).mockResolvedValueOnce([{ name: 'b1', created: null }]);
+    vi.mocked(r2ListObjects).mockResolvedValueOnce({
+      prefixes: ['dir/'],
+      objects: [],
+      next_token: null,
+    });
+
+    const wrapper = mountPanel({ active: true });
+    await flushPromises();
+    await wrapper.find('[data-id="b:b1"]').trigger('click');
+    await flushPromises();
+
+    const vgrid = wrapper.findComponent({ name: 'VGrid' });
+    const dirRow = (vgrid.props('source') as ObjectRow[])[0];
+    expect(dirRow.dir).toBe(true);
+
+    vi.mocked(r2ListObjects).mockResolvedValueOnce({
+      prefixes: [],
+      objects: [{ key: 'dir/a.txt', size: 1, last_modified: null, etag: null }],
+      next_token: null,
+    });
+    vgrid.vm.$emit('beforecellfocus', new CustomEvent('beforecellfocus', { detail: { model: dirRow } }));
+    vgrid.vm.$emit('dblclick', { target: document.createElement('div') });
+    await flushPromises();
+
+    expect(wrapper.find('.path-label').text()).toBe('b1/dir/');
+    expect(wrapper.find('.tree-stub').attributes('data-selected-id')).toBe('p:b1\0dir/');
+    expect((vgrid.props('source') as ObjectRow[]).map((r) => r.name)).toEqual(['a.txt']);
+
+    // A file uploaded elsewhere shows up after Refresh of the displayed folder.
+    vi.mocked(r2ListObjects).mockResolvedValueOnce({
+      prefixes: [],
+      objects: [
+        { key: 'dir/a.txt', size: 1, last_modified: null, etag: null },
+        { key: 'dir/new.txt', size: 2, last_modified: null, etag: null },
+      ],
+      next_token: null,
+    });
+    await wrapper.find('button[title="Refresh"]').trigger('click');
+    await flushPromises();
+    expect((vgrid.props('source') as ObjectRow[]).map((r) => r.name)).toEqual(['a.txt', 'new.txt']);
+    expect(r2ListObjects).toHaveBeenLastCalledWith('b1', 'dir/', null);
   });
 
   it('preview action sets PreviewWindow target and close event removes it', async () => {
@@ -657,7 +707,7 @@ describe('R2Panel', () => {
     await flushPromises();
 
     const initialStatus = status.value;
-    expect(initialStatus).toBe('1 objects, 0 folders');
+    expect(initialStatus).toBe('1 objects, 0 folders, 2.0 KB total');
 
     vi.mocked(save).mockResolvedValueOnce(null);
 

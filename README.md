@@ -16,11 +16,31 @@ File › Settings... (shown automatically on first run) stores four values in `~
 
 | Field | Needed for | Notes |
 |---|---|---|
-| Account ID | D1 and R2 | the 32-character hex ID from the Cloudflare dashboard |
-| API token | D1 | needs Account › D1 › Edit |
-| R2 Access Key ID / Secret Access Key | R2 | optional, but both or neither; create them under R2 › Manage API tokens |
+| Account ID | D1 and R2 | 32-character hex ID |
+| API token | D1 | needs Account › D1 › Edit permission |
+| R2 Access Key ID | R2 | optional, but paired with Secret Access Key |
+| R2 Secret Access Key | R2 | optional, but paired with Access Key ID |
 
 No OS keychain is used, so the secrets are stored in plain text.
+
+### Finding or generating credentials in the Cloudflare dashboard
+
+- **Account ID**:
+  - In your browser's address bar after logging in: `https://dash.cloudflare.com/<account-id>`
+  - Or in the right-hand sidebar of the **Workers & Pages** overview (or any domain overview) under **Account ID** (click to copy).
+- **API token** (for D1):
+  - Go to **My Profile** (user icon in top right) › **API Tokens** (or direct URL `dash.cloudflare.com/profile/api-tokens`).
+  - Click **Create Token** › **Create Custom Token** (**Get started**).
+  - Under **Permissions**, select **Account** › **D1** › **Edit**.
+  - Under **Account Resources**, select **Include** › your account.
+  - Click **Continue to summary** › **Create Token**, then copy the generated token.
+- **R2 Access Key ID** & **R2 Secret Access Key**:
+  - In the left sidebar, navigate to **Storage & Databases** › **R2** (or **R2**).
+  - Under **Account details** on the right side, click **Manage API Tokens**.
+  - Click **Create API token**.
+  - Under **Permissions**, select **Admin Read & List** (or **Admin Read & Write**) so buckets can be listed and objects read.
+  - Click **Create API Token**.
+  - Cloudflare will display both the **Access Key ID** and **Secret Access Key** (copy the secret immediately, as it cannot be viewed again).
 
 ## Requirements
 

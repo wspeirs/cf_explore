@@ -4,7 +4,12 @@ pub struct CmdError(anyhow::Error);
 
 impl<E: Into<anyhow::Error>> From<E> for CmdError {
     fn from(e: E) -> Self {
-        Self(e.into())
+        let e = e.into();
+        if crate::debug_enabled() {
+            // {:?} on the root SdkError includes the raw HTTP status/headers/body; no request headers (no creds).
+            eprintln!("[cf_explore] command error: {e:#}\n  chain: {:?}", e.chain().map(|c| format!("{c:?}")).collect::<Vec<_>>());
+        }
+        Self(e)
     }
 }
 

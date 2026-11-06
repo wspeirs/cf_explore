@@ -21,6 +21,7 @@ const row: ObjectRow = {
   last_modified: '2025-01-01T00:00:00Z',
   key: 'dir/a.txt',
   etag: 'e1',
+  dir: false,
 };
 
 function template(prop: string, handlers: { openPreview: (r: ObjectRow) => void; download: (r: ObjectRow) => void }) {
@@ -63,5 +64,16 @@ describe('buildObjectColumns', () => {
     expect(handlers.download).not.toHaveBeenCalled();
     (download.data?.onClick as () => void)();
     expect(handlers.download).toHaveBeenCalledWith(row);
+  });
+
+  it('folder rows: folder icon + name, blank size, no action buttons', () => {
+    const dir: ObjectRow = { name: 'sub/', size: 0, last_modified: '', key: 'dir/sub/', etag: null, dir: true };
+    const handlers = { openPreview: vi.fn(), download: vi.fn() };
+    const name = template('name', handlers)(h, { model: dir });
+    expect(name.data).toEqual({ class: 'dir-name' });
+    expect(JSON.stringify(name)).toContain('sub/');
+    expect(JSON.stringify(name)).toContain('<svg');
+    expect(template('size', handlers)(h, { model: dir }).children).toEqual(['']);
+    expect(template('key', handlers)(h, { model: dir }).children).toEqual(['']);
   });
 });
